@@ -181,13 +181,13 @@ void Labwork::labwork3_GPU() {
    //(3)
    cudaMemcpy(devInput, inputImage->buffer, pixelCount * sizeof (uchar3), cudaMemcpyHostToDevice);
    //(4)
-   int dimBlock = 64;
+   int dimBlock = 1024;
    int dimGrid = pixelCount / dimBlock;
    grayscale<<<dimGrid, dimBlock>>>(devInput, devGray);
    //(5)
 
    //(6)
-   cudaMemcpy(outputImage, devGray, pixelCount * sizeof (float), cudaMemcpyDeviceToHost);
+   cudaMemcpy(outputImage, devGray, pixelCount * sizeof (uchar3), cudaMemcpyDeviceToHost);
    //(7)
    cudaFree(devInput);
    cudaFree(devGray);
