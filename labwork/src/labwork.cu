@@ -193,8 +193,27 @@ void Labwork::labwork3_GPU() {
    cudaFree(devGray);
 }
 
+__global__ void grayscale2D(uchar3 *input, uchar3 *output, int imageWidth) {
+   int tid = threadIdx.x + blockIdx.x * blockDim.x + (imageWidth*(threadIdx.y+blockIdx.y*blockDim.y));
+   output[tid].x = (input[tid].x + input[tid].y + input[tid].z) / 3;
+   output[tid].z = output[tid].y = output[tid].x;
+}
+
 void Labwork::labwork4_GPU() {
-   
+   uchar3 * devInput;
+   uchar3 * devGray;
+   int pixelCount = inputImage->width * inputImage->height;
+   outputImage = static_cast<char *>(malloc(pixelCount * 3));
+   cudaMalloc(&devInput, pixelCount * sizeof (uchar3));
+   cudaMalloc(&devGray, pixelCount * sizeof (uchar3));
+   cudaMemcpy(devInput, inputImage->buffer, pixelCount * sizeof (uchar3), cudaMemcpyHostToDevice);
+   dim3 dimBlock = dim3(32,32);
+   dim3 dimGrid = dim3(inputImage->width/32+1, inputImage->height/32+1);
+   grayscale2D<<<dimGrid, dimBlock>>>(devInput,
+ devGray, inputImage->width);
+   cudaMemcpy(outputImage, devGray, pixelCount * sizeof (uchar3), cudaMemcpyDeviceToHost);
+   cudaFree(devInput);
+   cudaFree(devGray);
 }
 
 // CPU implementation of Gaussian Blur
