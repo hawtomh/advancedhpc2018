@@ -310,6 +310,64 @@ void Labwork::labwork5_GPU() {
    cudaFree(devBlur);
 }
 
+
+__global__ void gaussianBlurSharedMem(uchar3 * input, uchar3 * output, int width, int height, int kernel[]) {
+   int tidx = threadIdx.x + blockIdx.x * blockDim.x;
+   if (tidx >= width) return;
+   int tidy = threadIdx.y + blockIdx.y * blockDim.y;
+   if (tidy >= height) return;
+   int posOut = tidx + tidy * width;
+   __shared__ int kernel[49];
+   if (posOut < 49) {
+  skernel[posOut] = kernel[posOut]  
+   }
+   __syncthreads();
+
+   int sum = 0;
+   int c = 0;
+   for ( int x = -3 ; x < 3 ; x++) {
+      for ( int y = -3 ; y< 3 ; y++ ) {
+     int i = tidx + x;
+           int j = tidy + y;
+     if (x < 0) continue;
+           if (x >= width) continue;
+           if (y < 0) continue;
+           if (y >= height) continue;
+     int tid = j * width + i;
+           unsigned char gray = (input[tid].x + input[tid].y + input[tid].x)/3;
+           int coefficient = kernel[(y+3) * 7 + x + 3];
+           sum = sum + gray * coefficient;
+           c += coefficient;    
+      }
+   }
+   sum /= c;
+   output[posOut].x = output[posOut].y = output[posOut].z = sum;
+}
+
+
+void Labwork::labwork5_GPU_sharedMem() {
+   uchar3 * devInput;
+   uchar3 * devBlur;
+   int pixelCount = inputImage->width * inputImage->height;
+   outputImage = static_cast<char *>(malloc(pixelCount * 3));
+   cudaMalloc(&devInput, pixelCount * sizeof (uchar3));
+   cudaMalloc(&devBlur, pixelCount * sizeof (uchar3));
+   cudaMemcpy(devInput, inputImage->buffer, pixelCount * sizeof (uchar3), cudaMemcpyHostToDevice);
+   int kernel[] = { 0, 0, 1, 2, 1, 0, 0,  
+                     0, 3, 13, 22, 13, 3, 0,  
+                     1, 13, 59, 97, 59, 13, 1,  
+                     2, 22, 97, 159, 97, 22, 2,  
+                     1, 13, 59, 97, 59, 13, 1,  
+                     0, 3, 13, 22, 13, 3, 0,
+                     0, 0, 1, 2, 1, 0, 0 };
+   dim3 dimBlock = dim3(32,32);
+   dim3 dimGrid = dim3(inputImage->width/32+1, inputImage->height/32+1);
+   gaussianBlur<<<dimGrid, dimBlock>>>(devInput, devBlur, inputImage->width, inputImage->height, kernel);
+   cudaMemcpy(outputImage, devBlur, pixelCount * sizeof (uchar3), cudaMemcpyDeviceToHost);
+   cudaFree(devInput);
+   cudaFree(devBlur);
+}
+
 void Labwork::labwork6_GPU() {
 
 }
