@@ -315,7 +315,7 @@ void Labwork::labwork5_GPU() {
 }
 
 
-__global__ void gaussianBlurSharedMem(uchar3 * input, uchar3 * output, int width, int height, int kernel[]) {
+__global__ void gaussianBlurSharedMem(uchar3 * input, uchar3 * output, int width, int height, int * kernel ) {
    int tidx = threadIdx.x + blockIdx.x * blockDim.x;
    if (tidx >= width) return;
    int tidy = threadIdx.y + blockIdx.y * blockDim.y;
@@ -366,9 +366,13 @@ void Labwork::labwork5_GPU_sharedMem() {
                      1, 13, 59, 97, 59, 13, 1,  
                      0, 3, 13, 22, 13, 3, 0,
                      0, 0, 1, 2, 1, 0, 0 };
+
+   int * devKernel;
+   cudaMalloc(&devKernel, sizeof(kernel));
+   cudaMemcpy(devKernel,kernel, sizeof(kernel), cudaMemcpyHostToDevice);
    dim3 dimBlock = dim3(32,32);
    dim3 dimGrid = dim3(inputImage->width/32+1, inputImage->height/32+1);
-   gaussianBlurSharedMem<<<dimGrid, dimBlock>>>(devInput, devBlur, inputImage->width, inputImage->height, kernel);
+   gaussianBlurSharedMem<<<dimGrid, dimBlock>>>(devInput, devBlur, inputImage->width, inputImage->height, devKernel);
    cudaMemcpy(outputImage, devBlur, pixelCount * sizeof (uchar3), cudaMemcpyDeviceToHost);
    cudaFree(devInput);
    cudaFree(devBlur);
