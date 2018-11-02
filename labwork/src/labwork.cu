@@ -320,7 +320,8 @@ __global__ void gaussianBlurSharedMem(uchar3 * input, uchar3 * output, int width
    if (tidx >= width) return;
    int tidy = threadIdx.y + blockIdx.y * blockDim.y;
    if (tidy >= height) return;
-   int posOut = tidx + tidy * width;
+   int posOut = threadIdx.x + threadIdx.y * blockDim.x;
+
    __shared__ int skernel[49];
    if (posOut < 49) {
     skernel[posOut] = kernel[posOut];
@@ -345,6 +346,7 @@ __global__ void gaussianBlurSharedMem(uchar3 * input, uchar3 * output, int width
       }
    }
    sum /= c;
+   posOut = tidx + tidy * width;
    output[posOut].x = output[posOut].y = output[posOut].z = sum;
 }
 
