@@ -57,6 +57,10 @@ int main(int argc, char **argv) {
             printf("labwork 5 CPU ellapsed %.1fms\n", lwNum, timer.getElapsedTimeInMilliSec());
             timer.start();
             labwork.labwork5_GPU();
+          printf("labwork %d GPU ellapsed %.1fms\n", lwNum, timer.getElapsedTimeInMilliSec());
+      timer.start();
+      labwork.labwork5_GPU_sharedMem();
+      printf("labwork %d ellapsed %.1fms\n", lwNum, timer.getElapsedTimeInMilliSec());
             labwork.saveOutputImage("labwork5-gpu-out.jpg");
             break;
         case 6:
@@ -95,7 +99,7 @@ void Labwork::saveOutputImage(std::string outputFileName) {
 void Labwork::labwork1_CPU() {
     int pixelCount = inputImage->width * inputImage->height;
     outputImage = static_cast<char *>(malloc(pixelCount * 3));
-    for (int j = 0; j < 100; j++) {		// let's do it 100 times, otherwise it's too fast!
+    for (int j = 0; j < 100; j++) {   // let's do it 100 times, otherwise it's too fast!
         for (int i = 0; i < pixelCount; i++) {
             outputImage[i * 3] = (char) (((int) inputImage->buffer[i * 3] + (int) inputImage->buffer[i * 3 + 1] +
                                           (int) inputImage->buffer[i * 3 + 2]) / 3);
@@ -109,7 +113,7 @@ void Labwork::labwork1_OpenMP() {
  int pixelCount = inputImage->width * inputImage->height;
     outputImage = static_cast<char *>(malloc(pixelCount * 3));
     #pragma omp parallel for
-    for (int j = 0; j < 100; j++) {		// let's do it 100 times, otherwise it's too fast!
+    for (int j = 0; j < 100; j++) {   // let's do it 100 times, otherwise it's too fast!
         for (int i = 0; i < pixelCount; i++) {
             outputImage[i * 3] = (char) (((int) inputImage->buffer[i * 3] + (int) inputImage->buffer[i * 3 + 1] +
                                           (int) inputImage->buffer[i * 3 + 2]) / 3);
@@ -317,9 +321,9 @@ __global__ void gaussianBlurSharedMem(uchar3 * input, uchar3 * output, int width
    int tidy = threadIdx.y + blockIdx.y * blockDim.y;
    if (tidy >= height) return;
    int posOut = tidx + tidy * width;
-   __shared__ int kernel[49];
+   __shared__ int skernel[49];
    if (posOut < 49) {
-  skernel[posOut] = kernel[posOut]  
+    skernel[posOut] = kernel[posOut];
    }
    __syncthreads();
 
@@ -335,7 +339,7 @@ __global__ void gaussianBlurSharedMem(uchar3 * input, uchar3 * output, int width
            if (y >= height) continue;
      int tid = j * width + i;
            unsigned char gray = (input[tid].x + input[tid].y + input[tid].x)/3;
-           int coefficient = kernel[(y+3) * 7 + x + 3];
+           int coefficient = skernel[(y+3) * 7 + x + 3];
            sum = sum + gray * coefficient;
            c += coefficient;    
       }
@@ -362,7 +366,7 @@ void Labwork::labwork5_GPU_sharedMem() {
                      0, 0, 1, 2, 1, 0, 0 };
    dim3 dimBlock = dim3(32,32);
    dim3 dimGrid = dim3(inputImage->width/32+1, inputImage->height/32+1);
-   gaussianBlur<<<dimGrid, dimBlock>>>(devInput, devBlur, inputImage->width, inputImage->height, kernel);
+   gaussianBlurSharedMem<<<dimGrid, dimBlock>>>(devInput, devBlur, inputImage->width, inputImage->height, kernel);
    cudaMemcpy(outputImage, devBlur, pixelCount * sizeof (uchar3), cudaMemcpyDeviceToHost);
    cudaFree(devInput);
    cudaFree(devBlur);
