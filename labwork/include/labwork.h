@@ -8,6 +8,7 @@ class Labwork {
 private:
     JpegLoader jpegLoader;
     JpegInfo *inputImage;
+    JpegInfo *inputImage2;
     char *outputImage;
 
 public:

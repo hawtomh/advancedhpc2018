@@ -90,6 +90,7 @@ int main(int argc, char **argv) {
 
 void Labwork::loadInputImage(std::string inputFileName) {
     inputImage = jpegLoader.load(inputFileName);
+    inputImage2 = jpegLoader.load("../data/iliketrain.jpeg");
 }
 
 void Labwork::saveOutputImage(std::string outputFileName) {
@@ -378,9 +379,9 @@ void Labwork::labwork5_GPU_sharedMem() {
    cudaFree(devBlur);
 }
 
-__global__ void binari(uchar3 *input, uchar3 *output) {
+__global__ void binari(uchar3 *input, uchar3 *output, int t) {
    int tid = threadIdx.x + blockIdx.x * blockDim.x;
-   unsigned int g = (int) ( input[tid].x / 127 ) * 255;
+   unsigned int g = (int) ( input[tid].x / t ) * 255;
    output[tid].z = output[tid].y = output[tid].x = (char) g;
    //trash method
    /*if (input[tid].x < 127) {
@@ -390,23 +391,46 @@ __global__ void binari(uchar3 *input, uchar3 *output) {
    }*/
 }
 
+__global__ void brightness(uchar3 * input, uchar3 * output, int brightnessCoef) {
+   int tid = threadIdx.x + blockIdx.x * blockDim.x;
+   output[tid].x = output[tid].y = output[tid].z = min(max(input[tid].x + brightnessCoef,0), 255);
+   //trash method, again
+   /*if (((int) input[tid].x + brightnessCoef) > 255) {
+      output[tid].x = output[tid].y = output[tid].z = 255;
+   } else if (((int) input[tid].x + brightnessCoef) < 0) {
+      output[tid].x = output[tid].y = output[tid].z = 0;
+   } else {
+      output[tid].x = output[tid].y = output[tid].z = input[tid].x + brightnessCoef;
+   }*/
+}
+
+__global__ void blending(uchar3 *input1, uchar3 * input2, uchar3 *output, int percentOfImg1) {
+   int tid = threadIdx.x + blockIdx.x * blockDim.x;
+   output[tid].x = (1 / percentOfImg1) * input1[tid].x + (1 - (1 / percentOfImg1)) * input2[tid].x;
+   output[tid].y = (1 / percentOfImg1) * input1[tid].y + (1 - (1 / percentOfImg1)) * input2[tid].y;
+   output[tid].z = (1 / percentOfImg1) * input1[tid].z + (1 - (1 / percentOfImg1)) * input2[tid].z;
+}
+
 void Labwork::labwork6_GPU() {
    uchar3 * devInput;
    uchar3 * devGray;
    uchar3 * devBin;
+   uchar3 * devBright;
    int pixelCount = inputImage->width * inputImage->height;
    outputImage = static_cast<char *>(malloc(pixelCount * 3));
    cudaMalloc(&devInput, pixelCount * sizeof (uchar3));
    cudaMalloc(&devBin, pixelCount * sizeof (uchar3));
    cudaMalloc(&devGray, pixelCount * sizeof (uchar3));
+   cudaMalloc(&devBright, pixelCount * sizeof (uchar3));
    cudaMemcpy(devInput, inputImage->buffer, pixelCount * sizeof (uchar3), cudaMemcpyHostToDevice);
 
    int dimBlock = 1024;
    int dimGrid = pixelCount / dimBlock;
    grayscale<<<dimGrid, dimBlock>>>(devInput, devGray);
-   binari<<<dimGrid, dimBlock>>>(devGray, devBin);
+   binari<<<dimGrid, dimBlock>>>(devGray, devBin, 127);
+   brightness<<<dimGrid, dimBlock>>>(devGray, devBright, -10);
 
-   cudaMemcpy(outputImage, devBin, pixelCount * sizeof (uchar3), cudaMemcpyDeviceToHost);
+   cudaMemcpy(outputImage, devBright, pixelCount * sizeof (uchar3), cudaMemcpyDeviceToHost);
    cudaFree(devInput);
    cudaFree(devGray);
    cudaFree(devBin);
@@ -427,4 +451,4 @@ void Labwork::labwork9_GPU() {
 
 void Labwork::labwork10_GPU() {
 
-}
+} 
