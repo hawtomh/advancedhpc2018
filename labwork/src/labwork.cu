@@ -378,8 +378,39 @@ void Labwork::labwork5_GPU_sharedMem() {
    cudaFree(devBlur);
 }
 
-void Labwork::labwork6_GPU() {
+__global__ void binari(uchar3 *input, uchar3 *output) {
+   int tid = threadIdx.x + blockIdx.x * blockDim.x;
+   unsigned int g = (int) ( input[tid].x / 127 ) * 255;
+   output[tid].z = output[tid].y = output[tid].x = (char) g;
+   //trash method
+   /*if (input[tid].x < 127) {
+  output[tid].x = output[tid].y = output[tid].y = 0;
+   } else {
+  output[tid].x = output[tid].y = output[tid].y = 255;
+   }*/
+}
 
+void Labwork::labwork6_GPU() {
+   uchar3 * devInput;
+   uchar3 * devGray;
+   uchar3 * devBin;
+   int pixelCount = inputImage->width * inputImage->height;
+   outputImage = static_cast<char *>(malloc(pixelCount * 3));
+   cudaMalloc(&devInput, pixelCount * sizeof (uchar3));
+   cudaMalloc(&devBin, pixelCount * sizeof (uchar3));
+   cudaMalloc(&devGray, pixelCount * sizeof (uchar3));
+   cudaMemcpy(devInput, inputImage->buffer, pixelCount * sizeof (uchar3), cudaMemcpyHostToDevice);
+
+   int dimBlock = 1024;
+   int dimGrid = pixelCount / dimBlock;
+   grayscale<<<dimGrid, dimBlock>>>(devInput, devGray);
+   binari<<<dimGrid, dimBlock>>>(devGray, devBin);
+
+   cudaMemcpy(outputImage, devBin, pixelCount * sizeof (uchar3), cudaMemcpyDeviceToHost);
+   cudaFree(devInput);
+   cudaFree(devGray);
+   cudaFree(devBin);
+   
 }
 
 void Labwork::labwork7_GPU() {
