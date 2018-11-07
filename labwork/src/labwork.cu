@@ -103,6 +103,12 @@ void Labwork::saveOutputImage(std::string outputFileName)
     jpegLoader.save(outputFileName, outputImage, inputImage->width, inputImage->height, 90);
 }
 
+/********************
+ *
+ *    Labwork 1
+ *
+ ********************/
+
 void Labwork::labwork1_CPU()
 {
     int pixelCount = inputImage->width * inputImage->height;
@@ -164,6 +170,12 @@ int getSPcores(cudaDeviceProp devProp)
     return cores;
 }
 
+/********************
+ *
+ *    Labwork 2
+ *
+ ********************/
+
 void Labwork::labwork2_GPU()
 {
     int numDevices = 0;
@@ -185,6 +197,12 @@ void Labwork::labwork2_GPU()
         printf("    - BusWidth : %d\n", prop.memoryBusWidth);
     }
 }
+
+/********************
+ *
+ *    Labwork 3
+ *
+ ********************/
 
 
 __global__ void grayscale(uchar3 *input, uchar3 *output)
@@ -219,6 +237,12 @@ void Labwork::labwork3_GPU()
     cudaFree(devGray);
 }
 
+/********************
+ *
+ *    Labwork 4
+ *
+ ********************/
+
 __global__ void grayscale2D(uchar3 *input, uchar3 *output, int imageWidth, int imageHeight)
 {
     int tid = threadIdx.x + blockIdx.x * blockDim.x + (imageWidth * (threadIdx.y + blockIdx.y * blockDim.y));
@@ -245,6 +269,12 @@ void Labwork::labwork4_GPU()
     cudaFree(devInput);
     cudaFree(devGray);
 }
+
+/********************
+ *
+ *    Labwork 5
+ *
+ ********************/
 
 // CPU implementation of Gaussian Blur
 void Labwork::labwork5_CPU()
@@ -414,7 +444,14 @@ void Labwork::labwork5_GPU_sharedMem()
     cudaMemcpy(outputImage, devBlur, pixelCount * sizeof (uchar3), cudaMemcpyDeviceToHost);
     cudaFree(devInput);
     cudaFree(devBlur);
+    cudaFree(devKernel);
 }
+
+/********************
+ *
+ *    Labwork 6
+ *
+ ********************/
 
 __global__ void binari(uchar3 *input, uchar3 *output, int t)
 {
@@ -486,9 +523,140 @@ void Labwork::labwork6_GPU()
 
 }
 
+/********************
+ *
+ *    Labwork 7
+ *
+ ********************/
+
+__global__ void uchar3ToInt(uchar3 * input, int * outputMin, int * outputMax, int width, int height) 
+{
+  // Get the global thread ID with half of block
+  int tid = threadIdx.x + blockIdx.x * blockDim.x * 2; 
+  if(tid+blockDim.x >= width * height) return;
+  // Store the min/max from threadId of the current block and threadId of the "next" block
+  outputMin[threadIdx.x + blockIdx.x * blockDim.x] = min(input[tid].x, input[tid + blockDim.x].x);
+  outputMax[threadIdx.x + blockIdx.x * blockDim.x] = max(input[tid].x, input[tid + blockDim.x].x);
+}
+
+__global__ void reduceToMin(int * minTab) 
+{
+  extern __shared__ int cache[]; // Size of blockDim
+  
+  unsigned int localTid = threadIdx.x; // Local thread ID of the current block
+  unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x * 2; // Global thread ID multiply by two because there is half of block
+  
+  cache[localTid] = min(minTab[tid], minTab[tid + blockDim.x]); // Store the min between the pair and the impair block
+  
+  __syncthreads(); // Synchronize to be sure cache[] is complete
+  
+  // REDUCE
+  for (int r = blockDim.x  / 2; r > 0; r /= 2) 
+  {
+  
+    if (localTid < r)
+    {
+      cache[localTid] = min(cache[localTid], cache[localTid + r]);
+    }
+    
+    __syncthreads(); // Synchronize between each reduce step
+  }
+  
+  // Store result
+  if (localTid == 0)
+  {
+    minTab[blockIdx.x] = cache[0];
+  }
+}
+
+__global__ void reduceToMax(int * maxTab) 
+{
+  extern __shared__ int cache[]; // Size of blockDim
+  
+  unsigned int localTid = threadIdx.x; // Local thread ID of the current block
+  unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x * 2; // Global thread ID multiply by two because there is half of block
+  cache[localTid] = max(maxTab[tid], maxTab[tid + blockDim.x]); // Store the max between the pair and the impair block
+  
+  __syncthreads(); // Synchronize to be sure cache[] is complete
+  
+  // REDUCE
+  for (int r = blockDim.x  / 2; r > 0; r /= 2) 
+  {
+    if (localTid < r)
+    {
+      cache[localTid] = max(cache[localTid], cache[localTid + r]);
+    }
+    
+    __syncthreads(); // Synchronize between each reduce step
+  }
+  
+  // Store result
+  if (localTid == 0)
+  {
+    maxTab[blockIdx.x] = cache[0];
+  }
+}
+
+__global__ void grayscaleStretch(uchar3 * input, uchar3 * output, int * minG, int * maxG, int width, int height)
+{
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    if(tid >= width * height) return;
+  unsigned char g = (double(input[tid].x - minG[0]) / double(maxG[0] - minG[0])) * 255;
+    output[tid].x = output[tid].y = output[tid].z = g;
+}
+
 void Labwork::labwork7_GPU()
 {
+  // Host data
+    int pixelCount = inputImage->width * inputImage->height;
+    outputImage = static_cast<char *>(malloc(pixelCount * 3));
+    int dimBlock = 1024;
+    int nbBlock = ceil(pixelCount / dimBlock);
+    int cacheSize = dimBlock * sizeof(int);
+    cudaError_t r = cudaGetLastError();
+  
+  // Device data
+  uchar3 *devOutput;
+  uchar3 *devImage;
+  uchar3 *devGray;
+  int *devMin;
+  int *devMax;
 
+  cudaMalloc(&devOutput, pixelCount * sizeof(uchar3));  
+  cudaMalloc(&devImage, pixelCount * sizeof(uchar3));
+  cudaMalloc(&devGray, pixelCount * sizeof(uchar3));
+  cudaMalloc(&devMin, pixelCount * sizeof(int) / 2);
+  cudaMalloc(&devMax, pixelCount * sizeof(int) / 2);  
+  
+  cudaMemcpy(devImage, inputImage->buffer, pixelCount * sizeof(uchar3), cudaMemcpyHostToDevice);
+  
+  // Ask device to process data
+  int currentNbBlock = nbBlock/2;
+  // (1) Convert RGB to gray
+  grayscale <<<nbBlock, dimBlock>>>(devImage, devGray);
+  // (2) Extract min and max arrays by comparison with half of bock
+  uchar3ToInt <<<currentNbBlock, dimBlock>>>(devGray, devMin, devMax, inputImage->width, inputImage->height);
+  // (3) Apply REDUCE on min&max arrays until there are more than 1024 entries
+  do
+  {
+    currentNbBlock /= 2;
+    reduceToMin<<<currentNbBlock, dimBlock, cacheSize>>>(devMin);
+    reduceToMax<<<currentNbBlock, dimBlock, cacheSize>>>(devMax);
+  }while(currentNbBlock > 1);
+  // (4) Stretch the gray image
+  grayscaleStretch<<<nbBlock, dimBlock>>>(devGray, devOutput, devMin, devMax,  inputImage->width, inputImage->height);
+  
+  // Return data to host
+  cudaMemcpy(outputImage, devOutput,pixelCount * sizeof(uchar3),cudaMemcpyDeviceToHost);
+  r = cudaGetLastError();
+  if ( cudaSuccess != r ) {
+      printf("ERROR : %s\n", cudaGetErrorString(r));
+  }
+  // Free device memory
+  cudaFree(devImage);
+  cudaFree(devGray);
+  cudaFree(devMin);
+  cudaFree(devMax);
 }
 
 void Labwork::labwork8_GPU()
