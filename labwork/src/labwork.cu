@@ -601,13 +601,13 @@ __global__ void grayscaleStretch(uchar3 * input, uchar3 * output, int * minG, in
 {
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
     if(tid >= width * height) return;
-  unsigned char g = (double(input[tid].x - minG[0]) / double(maxG[0] - minG[0])) * 255;
+    unsigned char g = (double(input[tid].x - minG[0]) / double(maxG[0] - minG[0])) * 255;
     output[tid].x = output[tid].y = output[tid].z = g;
 }
 
 void Labwork::labwork7_GPU()
 {
-  // Host data
+    // Host data
     int pixelCount = inputImage->width * inputImage->height;
     outputImage = static_cast<char *>(malloc(pixelCount * 3));
     int dimBlock = 1024;
@@ -615,53 +615,228 @@ void Labwork::labwork7_GPU()
     int cacheSize = dimBlock * sizeof(int);
     cudaError_t r = cudaGetLastError();
   
-  // Device data
-  uchar3 *devOutput;
-  uchar3 *devImage;
-  uchar3 *devGray;
-  int *devMin;
-  int *devMax;
+    // Device data
+    uchar3 *devOutput;
+    uchar3 *devImage;
+    uchar3 *devGray;
+    int *devMin;
+    int *devMax;
 
-  cudaMalloc(&devOutput, pixelCount * sizeof(uchar3));  
-  cudaMalloc(&devImage, pixelCount * sizeof(uchar3));
-  cudaMalloc(&devGray, pixelCount * sizeof(uchar3));
-  cudaMalloc(&devMin, pixelCount * sizeof(int) / 2);
-  cudaMalloc(&devMax, pixelCount * sizeof(int) / 2);  
+    cudaMalloc(&devOutput, pixelCount * sizeof(uchar3));  
+    cudaMalloc(&devImage, pixelCount * sizeof(uchar3));
+    cudaMalloc(&devGray, pixelCount * sizeof(uchar3));
+    cudaMalloc(&devMin, pixelCount * sizeof(int) / 2);
+    cudaMalloc(&devMax, pixelCount * sizeof(int) / 2);  
   
-  cudaMemcpy(devImage, inputImage->buffer, pixelCount * sizeof(uchar3), cudaMemcpyHostToDevice);
+    cudaMemcpy(devImage, inputImage->buffer, pixelCount * sizeof(uchar3), cudaMemcpyHostToDevice);
   
-  // Ask device to process data
-  int currentNbBlock = nbBlock/2;
-  // (1) Convert RGB to gray
-  grayscale <<<nbBlock, dimBlock>>>(devImage, devGray);
-  // (2) Extract min and max arrays by comparison with half of bock
-  uchar3ToInt <<<currentNbBlock, dimBlock>>>(devGray, devMin, devMax, inputImage->width, inputImage->height);
-  // (3) Apply REDUCE on min&max arrays until there are more than 1024 entries
-  do
-  {
-    currentNbBlock /= 2;
-    reduceToMin<<<currentNbBlock, dimBlock, cacheSize>>>(devMin);
-    reduceToMax<<<currentNbBlock, dimBlock, cacheSize>>>(devMax);
-  }while(currentNbBlock > 1);
-  // (4) Stretch the gray image
-  grayscaleStretch<<<nbBlock, dimBlock>>>(devGray, devOutput, devMin, devMax,  inputImage->width, inputImage->height);
+    // Ask device to process data
+    int currentNbBlock = nbBlock/2;
+    // (1) Convert RGB to gray
+    grayscale <<<nbBlock, dimBlock>>>(devImage, devGray);
+    // (2) Extract min and max arrays by comparison with half of bock
+    uchar3ToInt <<<currentNbBlock, dimBlock>>>(devGray, devMin, devMax, inputImage->width, inputImage->height);
+    // (3) Apply REDUCE on min&max arrays until there are more than 1024 entries
+    do
+    {
+      currentNbBlock /= 2;
+      reduceToMin<<<currentNbBlock, dimBlock, cacheSize>>>(devMin);
+      reduceToMax<<<currentNbBlock, dimBlock, cacheSize>>>(devMax);
+    }while(currentNbBlock > 1);
+    // (4) Stretch the gray image
+    grayscaleStretch<<<nbBlock, dimBlock>>>(devGray, devOutput, devMin, devMax,  inputImage->width, inputImage->height);
   
-  // Return data to host
-  cudaMemcpy(outputImage, devOutput,pixelCount * sizeof(uchar3),cudaMemcpyDeviceToHost);
-  r = cudaGetLastError();
-  if ( cudaSuccess != r ) {
+    // Return data to host
+    cudaMemcpy(outputImage, devOutput,pixelCount * sizeof(uchar3),cudaMemcpyDeviceToHost);
+    r = cudaGetLastError();
+    if ( cudaSuccess != r ) {
       printf("ERROR : %s\n", cudaGetErrorString(r));
+    }
+    // Free device memory
+    cudaFree(devImage);
+    cudaFree(devGray);
+    cudaFree(devOutput);
+    cudaFree(devMin);
+    cudaFree(devMax);
+}
+
+/********************
+ *
+ *    Labwork 8
+ *
+ ********************/
+ 
+struct hsv
+{
+  double *h;
+  double *s;
+  double *v;
+};
+
+__global__ void RGB2HSV(uchar3 *input, hsv output, int width, int height)
+{
+  int tidx = threadIdx.x + blockIdx.x * blockDim.x;
+  int tidy = threadIdx.y + blockIdx.y * blockDim.y;
+  int tid = tidx + tidy * width;
+    if(threadIdx.x > height || threadIdx.y > width) return;
+    
+    uchar3 rgb = input[tid];
+    int maxRgb = max(rgb.x, max(rgb.y,rgb.z));
+    
+    double delta = (maxRgb - min(rgb.x, min(rgb.y,rgb.z))) / 255.0;
+    double maxRgbReduced = maxRgb / 255.0;
+    double R = rgb.x / 255.0;
+    double G = rgb.y / 255.0;
+    double B = rgb.z / 255.0;
+    // Define the V
+    output.v[tid] = maxRgbReduced;
+    
+    // Define the S
+    if(maxRgb != 0)
+    {
+
+      output.s[tid] = delta / maxRgbReduced;
+    } 
+    else 
+    {
+      output.s[tid] = 0;
+    }
+    
+    // Define the H
+    if (delta == 0)
+    {
+      output.h[tid] = 0;
+    }
+    else if (maxRgb == rgb.x)
+    {
+      output.h[tid] = 60 * fmodf(((G - B) / delta), 6.0);
+    }
+    else if (maxRgb == rgb.y)
+    {
+      output.h[tid] = 60 * (((B - R) / delta) + 2);
+    }
+    else if (maxRgb == rgb.z)
+    {
+    output.h[tid] = 60 * (((R - G) / delta) + 4);
+    }
+    if (tid == 0)
+    {
+        printf("R : %d, G : %d, B : %d\n", input[tid].x, input[tid].y, input[tid].z);
+        printf("maxRgbReduce : %lf, delta : %lf\n", maxRgbReduced, delta); 
+      printf("H : %lf, S : %lf V : %lf\n", output.h[tid], output.s[tid], output.v[tid]);
+    }
+}
+
+__global__ void HSV2RGB(hsv input, uchar3 *output, int width, int height)
+{
+  int tidx = threadIdx.x + blockIdx.x * blockDim.x;
+  int tidy = threadIdx.y + blockIdx.y * blockDim.y;
+  int tid = tidx + tidy * width;
+    if(threadIdx.x > height || threadIdx.y > width) return;
+    
+    double h = input.h[tid];
+    double s = input.s[tid];
+    double v = input.v[tid];
+  
+  double d = h / 60;
+  int hi = (int) fmodf(d, 6);
+  double f = d - hi;
+  double l = v * (1 - s);
+  double m = v * (1 - f * s);
+  double n = v * (1 - (1 - f) * s);
+  
+  l = floor(l * 255 + 0.5); // Better approximation, 2.1 become 2 and 2.6 become 3
+  m = floor(m * 255 + 0.5);
+  n = floor(n * 255 + 0.5);
+  int V = floor(v * 255 + 0.5); 
+  
+  if (h < 60)
+  {
+    output[tid].x = V;
+    output[tid].y = n;
+    output[tid].z = l;
   }
-  // Free device memory
-  cudaFree(devImage);
-  cudaFree(devGray);
-  cudaFree(devMin);
-  cudaFree(devMax);
+  else if (h < 120)
+  {
+    output[tid].x = m;
+    output[tid].y = V;
+    output[tid].z = l;
+    return;
+  }
+  else if (h < 180)
+  {
+    output[tid].x = l;
+    output[tid].y = V;
+    output[tid].z = n;
+  }
+  else if (h < 240)
+  {
+    output[tid].x = l;
+    output[tid].y = m;
+    output[tid].z = V;
+  }
+  else if (h < 300)
+  {
+    output[tid].x = n;
+    output[tid].y = l;
+    output[tid].z = V;
+  }
+  else
+  {
+    output[tid].x = V;
+    output[tid].y = l;
+    output[tid].z = m;
+  }
+  
+  if (tid == 0)
+    {
+      printf("H : %lf, S : %lf V : %lf\n", input.h[tid], input.s[tid], input.v[tid]);
+        printf("d : %lf, f : %lf, l : %lf, m : %lf, n : %lf\n", d, f, l, m, n); 
+      printf("R : %d, G : %d, B : %d\n", output[tid].x, output[tid].y, output[tid].z);
+    }
 }
 
 void Labwork::labwork8_GPU()
 {
+  // Host data
+    int pixelCount = inputImage->width * inputImage->height;
+    outputImage = static_cast<char *>(malloc(pixelCount * 3));
+    dim3 dimBlock2d = dim3(32,32);
+  dim3 nbBlock2d = dim3(ceil(inputImage->width/dimBlock2d.x), ceil(inputImage->height/dimBlock2d.y));
+  
+    // Device data
+    uchar3 *devRGB;
+    uchar3 *devOutput;
+    hsv devHSV;
+    cudaError_t r = cudaGetLastError();
+    cudaMalloc(&devRGB, pixelCount * sizeof(uchar3));
+    cudaMalloc(&devOutput, pixelCount * sizeof(uchar3));  
+    cudaMalloc((void**)&devHSV.h, pixelCount * sizeof(double));
+    cudaMalloc((void**)&devHSV.s, pixelCount * sizeof(double));
+    cudaMalloc((void**)&devHSV.v, pixelCount * sizeof(double));
+    
+    // Prepare data
+    cudaMemcpy(devRGB, inputImage->buffer, pixelCount * sizeof(uchar3), cudaMemcpyHostToDevice);
 
+  // Process data
+    RGB2HSV<<<nbBlock2d, dimBlock2d>>>(devRGB, devHSV, inputImage->width, inputImage->height);
+    HSV2RGB<<<nbBlock2d, dimBlock2d>>>(devHSV, devOutput, inputImage->width, inputImage->height);
+
+  // Get back the data
+    cudaMemcpy(outputImage, devOutput, pixelCount * sizeof(uchar3), cudaMemcpyDeviceToHost);    
+    
+    // Free the device
+    cudaFree(devRGB);
+    cudaFree(devHSV.h);
+    cudaFree(devHSV.s);
+    cudaFree(devHSV.v);
+    cudaFree(devOutput);
+    
+    // Show the error
+    r = cudaGetLastError();
+    if ( cudaSuccess != r ) {
+      printf("ERROR : %s\n", cudaGetErrorString(r));
+    }
 }
 
 void Labwork::labwork9_GPU()
