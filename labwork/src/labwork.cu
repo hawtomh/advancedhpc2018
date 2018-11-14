@@ -611,7 +611,7 @@ void Labwork::labwork7_GPU()
     int pixelCount = inputImage->width * inputImage->height;
     outputImage = static_cast<char *>(malloc(pixelCount * 3));
     int dimBlock = 1024;
-    int nbBlock = ceil(pixelCount / dimBlock);
+    int nbBlock = ceil((double)pixelCount / dimBlock);
     int cacheSize = dimBlock * sizeof(int);
     cudaError_t r = cudaGetLastError();
   
@@ -648,16 +648,19 @@ void Labwork::labwork7_GPU()
   
     // Return data to host
     cudaMemcpy(outputImage, devOutput,pixelCount * sizeof(uchar3),cudaMemcpyDeviceToHost);
-    r = cudaGetLastError();
-    if ( cudaSuccess != r ) {
-      printf("ERROR : %s\n", cudaGetErrorString(r));
-    }
+    
     // Free device memory
     cudaFree(devImage);
     cudaFree(devGray);
     cudaFree(devOutput);
     cudaFree(devMin);
     cudaFree(devMax);
+    
+    // Get the errors
+    r = cudaGetLastError();
+    if ( cudaSuccess != r ) {
+      printf("ERROR : %s\n", cudaGetErrorString(r));
+    }
 }
 
 /********************
@@ -802,13 +805,13 @@ void Labwork::labwork8_GPU()
     int pixelCount = inputImage->width * inputImage->height;
     outputImage = static_cast<char *>(malloc(pixelCount * 3));
     dim3 dimBlock2d = dim3(32,32);
-  dim3 nbBlock2d = dim3(ceil(inputImage->width/dimBlock2d.x), ceil(inputImage->height/dimBlock2d.y));
+  dim3 nbBlock2d = dim3(ceil((double)inputImage->width/dimBlock2d.x), ceil((double)inputImage->height/dimBlock2d.y));
+    cudaError_t r = cudaGetLastError();
   
     // Device data
     uchar3 *devRGB;
     uchar3 *devOutput;
     hsv devHSV;
-    cudaError_t r = cudaGetLastError();
     cudaMalloc(&devRGB, pixelCount * sizeof(uchar3));
     cudaMalloc(&devOutput, pixelCount * sizeof(uchar3));  
     cudaMalloc((void**)&devHSV.h, pixelCount * sizeof(double));
@@ -839,9 +842,104 @@ void Labwork::labwork8_GPU()
     }
 }
 
+/********************
+ *
+ *    Labwork 9
+ *
+ ********************/
+ 
+struct histogram {
+  int h[256];
+};
+ 
+__global__ void uchar3ToTabOfHisto(uchar3 *input, histogram *histo,int localHistoSize, int width, int height)
+{
+  int cache[256] = {0}; // Very slow :(
+  
+  unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x; // Global thread ID multiply by two because there is half of block
+  
+  for (int i = 0; i < localHistoSize; i ++)
+  {
+    if (tid * localHistoSize + i >= width * height) continue;
+    cache[input[tid * localHistoSize + i].x]++;
+  }
+
+  for (int i = 0; i < 256; i++)
+  {
+    histo[tid].h[i] = cache[i];
+  }
+}
+
+__global__ void reduceHisto(histogram *histo, int nbHistoMax)
+{
+  unsigned int localTid = threadIdx.x;
+  unsigned int tid = blockIdx.x;
+  unsigned int halfOfNbHisto = ceil((double)nbHistoMax/2);
+  if (tid + halfOfNbHisto >= nbHistoMax) return;
+  histo[tid].h[localTid] += histo[tid + halfOfNbHisto].h[localTid];
+}
+
+__global__ void equalizer(uchar3 *input, uchar3 *output, histogram *histo, int width, int height, double ratio)
+{
+  int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  if (tid >= width * height) return;
+  //unsigned int g = round((double)histo[0].h[input[tid].x] * ratio);
+  //output[tid].x = output[tid].y = output[tid].z = g;
+}
+
 void Labwork::labwork9_GPU()
 {
-
+  // Host data
+    int pixelCount = inputImage->width * inputImage->height;
+  outputImage = static_cast<char *>(malloc(pixelCount * 3));
+    int dimBlock = 1024;
+    int localHistoSize = 1024;
+    int nbBlock = ceil((double)pixelCount / dimBlock / localHistoSize); // local histo of one thread will considere 1024px
+    cudaError_t r = cudaGetLastError();
+    
+    int currentDimBlock = 256;
+    int currentNbHisto = ceil((double)pixelCount/localHistoSize);
+    int currentNbBlock = currentNbHisto;
+    
+    double ratio = 255.0 / pixelCount;
+  
+  // Device data
+  uchar3 *devInput;
+  uchar3 *devGray;
+  uchar3 *devOutput;
+  histogram *devHisto;
+  cudaMalloc(&devInput, pixelCount * sizeof(uchar3));
+  cudaMalloc(&devGray, pixelCount * sizeof(uchar3));
+  cudaMalloc(&devOutput, pixelCount * sizeof(uchar3));
+  cudaMalloc(&devHisto, currentNbHisto * sizeof(histogram));
+  
+  cudaMemcpy(devInput, inputImage->buffer, pixelCount * sizeof(uchar3), cudaMemcpyHostToDevice);
+  
+  // Process data
+  grayscale <<<nbBlock * 1024, dimBlock>>>(devInput, devGray);
+    uchar3ToTabOfHisto <<<nbBlock, dimBlock>>>(devGray, devHisto,localHistoSize, inputImage->width, inputImage->height);
+    
+    do
+    {
+      currentNbHisto = currentNbBlock;
+      currentNbBlock = ceil((double) currentNbBlock / 2);
+      reduceHisto<<<currentNbBlock, currentDimBlock>>>(devHisto, currentNbHisto);
+    }while(currentNbBlock > 1);
+    equalizer<<<nbBlock * 1024, dimBlock>>>(devGray, devOutput, devHisto,  inputImage->width, inputImage->height, ratio);
+  
+    // Return data to host
+    cudaMemcpy(outputImage, devOutput,pixelCount * sizeof(uchar3),cudaMemcpyDeviceToHost);
+  
+  // Free the device
+  cudaFree(devInput);
+  cudaFree(devGray);
+  cudaFree(devOutput);
+  
+  // Show the error
+    r = cudaGetLastError();
+    if ( cudaSuccess != r ) {
+      printf("ERROR : %s\n", cudaGetErrorString(r));
+    }
 }
 
 void Labwork::labwork10_GPU()
