@@ -879,22 +879,27 @@ __global__ void reduceHisto(histogram *histo, int nbHistoMax)
   histo[tid].h[localTid] += histo[tid + halfOfNbHisto].h[localTid];
 }
 
-__global__ void equalizer(uchar3 *input, uchar3 *output, histogram *histo, int width, int height)
+__global__ void computeCDF(histogram *histo,int pixelCount)
 {
-  __shared__ int histoCumul[256];
-  if (threadIdx.x < 256)
-  {
-    for ( int i = 0; i <= threadIdx.x; i++)
-    {
-      histoCumul[threadIdx.x] += histo[0].h[i];
-    }
-  }
-  __syncthreads();
+  int minCdf = 0;
+  int cumul = 0;
   
+  for (int i = 0; i < 256; i++)
+  {
+    if (minCdf == 0)
+    {
+      minCdf = histo[0].h[i];
+    }
+    cumul += histo[0].h[i];
+    histo[0].h[i] = round((double) (cumul - minCdf) / (pixelCount - minCdf) * 255.0);
+  }
+}
+
+__global__ void equalizer(uchar3 *input, uchar3 *output, histogram *histo, int width, int height)
+{ 
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= width * height) return;
-  unsigned int g = round((double) histoCumul[input[tid].x] / (width * height) * 255.0);
-  output[tid].x = output[tid].y = output[tid].z = g;
+  output[tid].x = output[tid].y = output[tid].z = histo[0].h[input[tid].x];
 }
 
 void Labwork::labwork9_GPU()
@@ -933,6 +938,7 @@ void Labwork::labwork9_GPU()
       currentNbBlock = ceil((double) currentNbBlock / 2);
       reduceHisto<<<currentNbBlock, currentDimBlock>>>(devHisto, currentNbHisto);
     }while(currentNbBlock > 1);
+    computeCDF<<<1,1>>>(devHisto, pixelCount);
     equalizer<<<nbBlock * 1024, dimBlock>>>(devGray, devOutput, devHisto,  inputImage->width, inputImage->height);
   
     // Return data to host
