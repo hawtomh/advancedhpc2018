@@ -879,12 +879,22 @@ __global__ void reduceHisto(histogram *histo, int nbHistoMax)
   histo[tid].h[localTid] += histo[tid + halfOfNbHisto].h[localTid];
 }
 
-__global__ void equalizer(uchar3 *input, uchar3 *output, histogram *histo, int width, int height, double ratio)
+__global__ void equalizer(uchar3 *input, uchar3 *output, histogram *histo, int width, int height)
 {
+  __shared__ int histoCumul[256];
+  if (threadIdx.x < 256)
+  {
+    for ( int i = 0; i <= threadIdx.x; i++)
+    {
+      histoCumul[threadIdx.x] += histo[0].h[i];
+    }
+  }
+  __syncthreads();
+  
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid >= width * height) return;
-  //unsigned int g = round((double)histo[0].h[input[tid].x] * ratio);
-  //output[tid].x = output[tid].y = output[tid].z = g;
+  unsigned int g = round((double) histoCumul[input[tid].x] / (width * height) * 255.0);
+  output[tid].x = output[tid].y = output[tid].z = g;
 }
 
 void Labwork::labwork9_GPU()
@@ -900,8 +910,6 @@ void Labwork::labwork9_GPU()
     int currentDimBlock = 256;
     int currentNbHisto = ceil((double)pixelCount/localHistoSize);
     int currentNbBlock = currentNbHisto;
-    
-    double ratio = 255.0 / pixelCount;
   
   // Device data
   uchar3 *devInput;
@@ -925,7 +933,7 @@ void Labwork::labwork9_GPU()
       currentNbBlock = ceil((double) currentNbBlock / 2);
       reduceHisto<<<currentNbBlock, currentDimBlock>>>(devHisto, currentNbHisto);
     }while(currentNbBlock > 1);
-    equalizer<<<nbBlock * 1024, dimBlock>>>(devGray, devOutput, devHisto,  inputImage->width, inputImage->height, ratio);
+    equalizer<<<nbBlock * 1024, dimBlock>>>(devGray, devOutput, devHisto,  inputImage->width, inputImage->height);
   
     // Return data to host
     cudaMemcpy(outputImage, devOutput,pixelCount * sizeof(uchar3),cudaMemcpyDeviceToHost);
