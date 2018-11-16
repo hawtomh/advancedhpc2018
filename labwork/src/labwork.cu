@@ -336,16 +336,16 @@ __global__ void gaussianBlur(uchar3 *input, uchar3 *output, int width, int heigh
                    };
     int sum = 0;
     int c = 0;
-    for ( int x = -3 ; x < 3 ; x++)
+    for ( int x = -3 ; x <= 3 ; x++)
     {
-        for ( int y = -3 ; y < 3 ; y++ )
+        for ( int y = -3 ; y <= 3 ; y++ )
         {
             int i = tidx + x;
             int j = tidy + y;
-            if (x < 0) continue;
-            if (x >= width) continue;
-            if (y < 0) continue;
-            if (y >= height) continue;
+            if (i < 0) continue;
+            if (i >= width) continue;
+            if (j < 0) continue;
+            if (j >= height) continue;
             int tid = j * width + i;
             unsigned char gray = (input[tid].x + input[tid].y + input[tid].x) / 3;
             int coefficient = kernel[(y + 3) * 7 + x + 3];
@@ -679,9 +679,10 @@ struct hsv
 __global__ void RGB2HSV(uchar3 *input, hsv output, int width, int height)
 {
   int tidx = threadIdx.x + blockIdx.x * blockDim.x;
-  int tidy = threadIdx.y + blockIdx.y * blockDim.y;
+    if (tidx >= width) return;
+    int tidy = threadIdx.y + blockIdx.y * blockDim.y;
+    if (tidy >= height) return;
   int tid = tidx + tidy * width;
-    if(threadIdx.x > height || threadIdx.y > width) return;
     
     uchar3 rgb = input[tid];
     int maxRgb = max(rgb.x, max(rgb.y,rgb.z));
@@ -722,20 +723,16 @@ __global__ void RGB2HSV(uchar3 *input, hsv output, int width, int height)
     {
     output.h[tid] = 60 * (((R - G) / delta) + 4);
     }
-    if (tid == 0)
-    {
-        printf("R : %d, G : %d, B : %d\n", input[tid].x, input[tid].y, input[tid].z);
-        printf("maxRgbReduce : %lf, delta : %lf\n", maxRgbReduced, delta); 
-      printf("H : %lf, S : %lf V : %lf\n", output.h[tid], output.s[tid], output.v[tid]);
-    }
 }
 
 __global__ void HSV2RGB(hsv input, uchar3 *output, int width, int height)
 {
   int tidx = threadIdx.x + blockIdx.x * blockDim.x;
-  int tidy = threadIdx.y + blockIdx.y * blockDim.y;
+    if (tidx >= width) return;
+    int tidy = threadIdx.y + blockIdx.y * blockDim.y;
+    if (tidy >= height) return;
   int tid = tidx + tidy * width;
-    if(threadIdx.x > height || threadIdx.y > width) return;
+
     
     double h = input.h[tid];
     double s = input.s[tid];
@@ -790,13 +787,6 @@ __global__ void HSV2RGB(hsv input, uchar3 *output, int width, int height)
     output[tid].y = l;
     output[tid].z = m;
   }
-  
-  if (tid == 0)
-    {
-      printf("H : %lf, S : %lf V : %lf\n", input.h[tid], input.s[tid], input.v[tid]);
-        printf("d : %lf, f : %lf, l : %lf, m : %lf, n : %lf\n", d, f, l, m, n); 
-      printf("R : %d, G : %d, B : %d\n", output[tid].x, output[tid].y, output[tid].z);
-    }
 }
 
 void Labwork::labwork8_GPU()
@@ -806,7 +796,7 @@ void Labwork::labwork8_GPU()
     outputImage = static_cast<char *>(malloc(pixelCount * 3));
     dim3 dimBlock2d = dim3(32,32);
   dim3 nbBlock2d = dim3(ceil((double)inputImage->width/dimBlock2d.x), ceil((double)inputImage->height/dimBlock2d.y));
-    cudaError_t r = cudaGetLastError();
+  cudaError_t r = cudaGetLastError();
   
     // Device data
     uchar3 *devRGB;
@@ -956,7 +946,192 @@ void Labwork::labwork9_GPU()
     }
 }
 
+/********************
+ *
+ *    Labwork 10
+ *
+ ********************/
+ 
+__global__ void kuwaharaFilter(uchar3 * input, hsv HSV,uchar3 *output, int regionSize, int width, int height)
+{
+    int tidx = threadIdx.x + blockIdx.x * blockDim.x;
+    if (tidx >= width) return;
+    int tidy = threadIdx.y + blockIdx.y * blockDim.y;
+    if (tidy >= height) return;
+    int tid = tidx + tidy * width;
+    
+    double regionAverage[4] = {0};
+    int regionPixelCount[4] = {0};
+    
+    int regionAverageColorR[4] = {0};
+    int regionAverageColorG[4] = {0};
+    int regionAverageColorB[4] = {0};
+    
+    for (int x = 1 - regionSize; x <= regionSize - 1; x++)
+    {
+      for (int y = 1 - regionSize; y <= regionSize - 1; y++)
+      {
+        int i = tidx + x;
+            int j = tidy + y;
+            if (i < 0) continue;
+            if (i >= width) continue;
+            if (j < 0) continue;
+            if (j >= height) continue;
+            int currentPos =j * width + i;
+
+            // Top-Left region
+            if (x <= 0 && y <= 0)
+            {
+        regionAverage[0] += HSV.v[currentPos];
+        regionAverageColorR[0] += input[currentPos].x;
+        regionAverageColorG[0] += input[currentPos].y;
+        regionAverageColorB[0] += input[currentPos].z;
+        regionPixelCount[0] ++;             
+            }
+            // Top-Right region
+            if (x >= 0 && y <= 0)
+            {
+              regionAverage[1] += HSV.v[currentPos];
+        regionAverageColorR[1] += input[currentPos].x;
+        regionAverageColorG[1] += input[currentPos].y;
+        regionAverageColorB[1] += input[currentPos].z;
+        regionPixelCount[1] ++;
+            }
+            // Bottom-Left region
+            if (x <= 0 && y >= 0)
+            {
+              regionAverage[2] += HSV.v[currentPos];
+        regionAverageColorR[2] += input[currentPos].x;
+        regionAverageColorG[2] += input[currentPos].y;
+        regionAverageColorB[2] += input[currentPos].z;
+        regionPixelCount[2] ++;
+            }
+            // Bottom-right region
+            if (x >= 0 && y >= 0)
+            {
+              regionAverage[3] += HSV.v[currentPos];
+        regionAverageColorR[3] += input[currentPos].x;
+        regionAverageColorG[3] += input[currentPos].y;
+        regionAverageColorB[3] += input[currentPos].z;
+        regionPixelCount[3] ++;
+            }
+      }
+    }
+    
+    for (int i = 0; i < 4; i ++)
+    {
+      regionAverage[i] /= regionPixelCount[i];
+    regionAverageColorR[i] /= regionPixelCount[i];
+    regionAverageColorG[i] /= regionPixelCount[i];
+    regionAverageColorB[i] /= regionPixelCount[i];
+    }
+    
+    double regionSd[4] = {0.0};
+  
+  for (int x = 1 - regionSize; x <= regionSize - 1; x++)
+    {
+      for (int y = 1 - regionSize; y <= regionSize - 1; y++)
+      {
+        int i = tidx + x;
+            int j = tidy + y;
+            if (i < 0) continue;
+            if (i >= width) continue;
+            if (j < 0) continue;
+            if (j >= height) continue;
+            int currentPos =j * width + i;
+            
+            // Top-Left region
+            if (x <= 0 && y <= 0)
+            {
+        regionSd[0] += pow((HSV.v[currentPos] - regionAverage[0]), 2.0);
+            }
+            // Top-Right region
+            if (x >= 0 && y <= 0)
+            {
+              regionSd[1] += pow((HSV.v[currentPos] - regionAverage[1]), 2.0);
+            }
+            // Bottom-Left region
+            if (x <= 0 && y >= 0)
+            {
+              regionSd[2] += pow((HSV.v[currentPos] - regionAverage[2]), 2.0);
+            }
+            // Bottom-right region
+            if (x >= 0 && y >= 0)
+            {
+              regionSd[3] += pow((HSV.v[currentPos] - regionAverage[3]), 2.0);
+            }
+      }
+    }
+    
+    for (int i = 0; i < 4; i ++)
+    {
+      regionSd[i] = sqrt(regionSd[i] / regionPixelCount[i]);
+    }
+    
+    if(regionSd[0] <= regionSd[1] && regionSd[0] <= regionSd[2] && regionSd[0] <= regionSd[3])
+    {
+      output[tid].x = regionAverageColorR[0];
+      output[tid].y = regionAverageColorG[0];
+      output[tid].z = regionAverageColorB[0];
+    }
+    else if(regionSd[1] <= regionSd[2] && regionSd[1] <= regionSd[3])
+    {
+      output[tid].x = regionAverageColorR[1];
+      output[tid].y = regionAverageColorG[1];
+      output[tid].z = regionAverageColorB[1];
+    }
+    else if(regionSd[2] <= regionSd[3])
+    {
+      output[tid].x = regionAverageColorR[2];
+      output[tid].y = regionAverageColorG[2];
+      output[tid].z = regionAverageColorB[2];
+    }
+    else
+    {
+      output[tid].x = regionAverageColorR[3];
+      output[tid].y = regionAverageColorG[3];
+      output[tid].z = regionAverageColorB[3];
+    }
+}
+
 void Labwork::labwork10_GPU()
 {
-
+  // Host data
+  int pixelCount = inputImage->width * inputImage->height;
+  outputImage = static_cast<char *>(malloc(pixelCount * 3));
+    dim3 dimBlock2d = dim3(16,16);
+  dim3 nbBlock2d = dim3(ceil((double)inputImage->width/dimBlock2d.x), ceil((double)inputImage->height/dimBlock2d.y));
+    cudaError_t r = cudaGetLastError();
+    
+    // Device data
+    int regionSize = 8;
+    uchar3 *devRGB;
+    uchar3 *devOutput;
+    hsv devHSV;
+    cudaMalloc(&devRGB, pixelCount * sizeof(uchar3));
+    cudaMalloc(&devOutput, pixelCount * sizeof(uchar3));  
+    cudaMalloc((void**)&devHSV.h, pixelCount * sizeof(double));
+    cudaMalloc((void**)&devHSV.s, pixelCount * sizeof(double));
+    cudaMalloc((void**)&devHSV.v, pixelCount * sizeof(double));
+    
+    cudaMemcpy(devRGB, inputImage->buffer, pixelCount * sizeof(uchar3), cudaMemcpyHostToDevice);
+    
+    // Process data
+    RGB2HSV<<<nbBlock2d, dimBlock2d>>>(devRGB, devHSV, inputImage->width, inputImage->height);
+    kuwaharaFilter<<<nbBlock2d, dimBlock2d>>>(devRGB, devHSV, devOutput, regionSize, inputImage->width, inputImage->height);
+    
+    cudaMemcpy(outputImage, devOutput,pixelCount * sizeof(uchar3),cudaMemcpyDeviceToHost);
+    
+    // Free the device
+    cudaFree(devRGB);
+    cudaFree(devHSV.h);
+    cudaFree(devHSV.s);
+    cudaFree(devHSV.v);
+    cudaFree(devOutput);
+    
+    // Show the error
+    r = cudaGetLastError();
+    if ( cudaSuccess != r ) {
+      printf("ERROR : %s\n", cudaGetErrorString(r));
+    }
 }
