@@ -3,7 +3,8 @@
 #include <include/jpegloader.h>
 #include <include/timer.h>
 
-class Labwork {
+class Labwork
+{
 
 private:
     JpegLoader jpegLoader;
@@ -13,6 +14,7 @@ private:
 
 public:
     void loadInputImage(std::string inputFileName);
+    void loadInputImage2(std::string inputFileName);
     void saveOutputImage(std::string outputFileName);
 
     void labwork1_CPU();
@@ -28,7 +30,7 @@ public:
     void labwork5_GPU();
     void labwork5_GPU_sharedMem();
 
-    void labwork6_GPU();
+    void labwork6_GPU(int method, int detail);
 
     void labwork7_GPU();
 
